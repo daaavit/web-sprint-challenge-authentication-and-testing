@@ -9,4 +9,9 @@ test('sanity', () => {
   expect(true).toBe(true)
 })
 
-//need write tests!!!
+describe('server.js', () => {
+  test('[1] respondes with the correct message on valid credentials', async () => {
+    const res = await requres(server).post('/api/auth/login').send({username: 'davit', password: 'khuts'})
+    expect(res.body.message).toMatch('/welomce davit/i');
+  }, 500)
+})
