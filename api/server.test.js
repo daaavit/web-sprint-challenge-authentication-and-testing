@@ -1,53 +1,91 @@
-// Write your tests here
-const request = require('supertest')
-const server = require('./server')
-const bcrypt = require('bcryptjs')
-const jwtDecode =require('jwt-decode')
+const request = require("supertest");
+const db = require('../data/dbConfig');
+const server = require("./server");
+const jokes = require("./jokes/jokes-data");
+const bcrypt = require("bcryptjs");
+const { BCRYPT_ROUNDS } = require("./secrets");
 
+const invalidAuthOne = { username: "", password: "1234" };
+const invalidAuthTwo = { username: "bob", password: "" };
 
-test('sanity', () => {
-  expect(true).toBe(true)
-})
+const validAuthOne = { username: "bob", password: "1234" };
 
-describe('server.js', () => {
-  test('[1] responds with the correct message on valid credentials', async () => {
-    const res = await request(server).post('/api/auth/login').send({ username: 'davit', password: 'khuts' })
-    expect(res.body.message).toMatch(/welcome davit/i)
-    expect(res.body.message).toMatch(/welcome davit/i);
-  }, 500);
+beforeEach(async () => {
+  await db.migrate.rollback();
+  await db.migrate.latest();
+});
 
-  test('[2] responds with a token with correct { username,  exp, iat }', async () => {
-    let res = await request(server).post('/api/auth/login').send({ username: 'davit', password: 'khuts' });
-    let decoded = jwtDecode(res.body.token);
-    expect(decoded).toHaveProperty('iat');
-    expect(decoded).toHaveProperty('exp');
-    expect(decoded).toMatchObject({
-      id: 1,
-      username: 'davit',
-    });
+afterAll(async () => {
+  await db.destroy();
+});
+
+test("that true is true", () => {
+  expect(true).toBe(true);
+});
+
+test("whether the env is what, a string?", () => {
+  expect(process.env.NODE_ENV).toBe("testing");
+});
+
+describe("registration endpoint", () => {
+  it("returns correct error message if req body lacks username", async () => {
+    const res = await request(server)
+      .post("/api/auth/register")
+      .send(invalidAuthOne);
+    expect(res.body.message).toBe("username and password required");
+  });
+  it("returns correct error message if req body lacks password", async () => {
+    const res = await request(server)
+      .post("/api/auth/register")
+      .send(invalidAuthTwo);
+    expect(res.body.message).toBe("username and password required");
+  });
+  it("successfully creates account", async () => {
+    await request(server).post("/api/auth/register").send(validAuthOne);
+    const [user] = await db("users").where({ username: validAuthOne.username });
+    expect(user).toMatchObject({ username: "bob" });
   });
 });
-describe('[GET] /api/users', () => {
-  test('[3] requests with an invalid token are bounced with proper status and message', async () => {
-    const res = await request(server).get('/api/jokes').set('Authorization', 'vader');
-    expect(res.body.message).toMatch(/token invalid/i)
+
+describe("login endpoint", () => {
+  beforeEach(async () => {
+    const hash = bcrypt.hashSync(validAuthOne.password, BCRYPT_ROUNDS);
+    await db("users").insert({
+      username: validAuthOne.username,
+      password: hash,
+    });
   });
-  test('[4] requests with a valid token obtain a list of users', async () => {
-    let res = await request(server).post('/api/auth/login').send({ username: 'davit', password: 'khuts' })
-    res = await request(server).get('/api/jokes').set('Authorization', res.body.token)
-    expect(res.body).toMatchObject([
-      {
-        "id": "0189hNRf2g",
-        "joke": "I'm tired of following my dreams. I'm just going to ask them where they are going and meet up with them later."
-      },
-      {
-        "id": "08EQZ8EQukb",
-        "joke": "Did you hear about the guy whose whole left side was cut off? He's all right now."
-      },
-      {
-        "id": "08xHQCdx5Ed",
-        "joke": "Why didn’t the skeleton cross the road? Because he had no guts."
-      },
-    ])
+  it("user can successfully login with correct credentials", async () => {
+    const res = await request(server)
+      .post("/api/auth/login")
+      .send(validAuthOne);
+    expect(res.body.message).toBe("welcome, bob");
+  });
+  it("does not login user witout password", async () => {
+    const res = await request(server)
+      .post("/api/auth/login")
+      .send(invalidAuthTwo);
+    expect(res.body.message).toBe("username and password required");
+  });
+});
+
+describe("jokes endpoint", () => {
+  beforeEach(async () => {
+    const hash = bcrypt.hashSync(validAuthOne.password, BCRYPT_ROUNDS);
+    await db("users").insert({
+      username: validAuthOne.username,
+      password: hash,
+    });
+  });
+  it("user without a token cannot see jokes", async () => {
+    const res = await request(server).get("/api/jokes");
+    expect(res.body.message).toBe("token required");
+  });
+  it("user without a valid token can see jokes", async () => {
+    let res = await request(server).post("/api/auth/login").send(validAuthOne);
+    res = await request(server)
+      .get("/api/jokes")
+      .set("Authorization", res.body.token);
+    expect(res.body).toMatchObject(jokes);
   });
 });
